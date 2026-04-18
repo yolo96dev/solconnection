@@ -4,6 +4,12 @@ import {
   getIntentsStatus,
   submitIntentsDepositTx,
 } from "../lib/intents.js";
+import {
+  getExecutorAccount,
+  getWrapNearBalance,
+  unwrapWNear,
+  enterJackpot,
+} from "../lib/nearExecutor.js";
 
 const router = express.Router();
 
@@ -62,6 +68,10 @@ function asString(v: unknown) {
   return String(v ?? "").trim();
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function extractReceivedAmountYoctoOrSmallestUnit(status: any): string | null {
   const candidates = [
     status?.destinationAmount,
@@ -102,6 +112,7 @@ router.post("/quote", async (req, res) => {
 
     const originAsset = requiredEnv("INTENTS_ORIGIN_SOL_ASSET_ID");
     const destinationAsset = requiredEnv("INTENTS_DESTINATION_NEAR_ASSET_ID");
+    const executorRecipient = requiredEnv("NEAR_EXECUTOR_ACCOUNT_ID");
 
     const deadlineMs = Date.now() + 10 * 60 * 1000;
 
@@ -116,7 +127,7 @@ router.post("/quote", async (req, res) => {
       depositType: "ORIGIN_CHAIN",
       destinationAsset,
       amount,
-      recipient: nearAccountId,
+      recipient: executorRecipient,
       recipientType: "DESTINATION_CHAIN",
       refundTo: solAddress,
       refundType: "ORIGIN_CHAIN",
@@ -138,6 +149,8 @@ router.post("/quote", async (req, res) => {
         expirationTime: quote.expirationTime || quote.deadline || payload.deadline,
         amountIn: quote.amountIn || quote.amount || amount,
         amountOut: quote.amountOut || null,
+        executorRecipient,
+        beneficiaryNearAccountId: nearAccountId,
         raw: quote,
       },
     });
@@ -194,6 +207,55 @@ router.get("/status", async (req, res) => {
   } catch (err: any) {
     return res.status(500).json({
       error: err?.message || "Failed to load Intents status",
+    });
+  }
+});
+
+router.post("/finalize", async (req, res) => {
+  try {
+    const nearAccountId = asString(req.body?.nearAccountId);
+    const entropyHex = asString(req.body?.entropyHex);
+    const expectedNearYocto = asString(req.body?.expectedNearYocto);
+
+    if (!nearAccountId || !entropyHex || !expectedNearYocto) {
+      return res.status(400).json({
+        error: "nearAccountId, entropyHex, and expectedNearYocto are required",
+      });
+    }
+
+    const executor = await getExecutorAccount();
+    const needed = BigInt(expectedNearYocto);
+    const wrapBal = BigInt(await getWrapNearBalance(executor.accountId));
+
+    if (wrapBal < needed) {
+      return res.status(400).json({
+        error:
+          "Executor does not have enough received wNEAR yet. Wait for settlement or verify your quote recipient is the executor account.",
+      });
+    }
+
+    await unwrapWNear(expectedNearYocto);
+
+    await sleep(1200);
+
+    const tx: any = await enterJackpot({
+      entropyHex,
+      amountYocto: expectedNearYocto,
+    });
+
+    return res.json({
+      ok: true,
+      executorAccountId: executor.accountId,
+      beneficiaryNearAccountId: nearAccountId,
+      enteredAmountYocto: expectedNearYocto,
+      txHash:
+        tx?.transaction_outcome?.id ||
+        tx?.transaction?.hash ||
+        null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: err?.message || "Failed to finalize SOL bet",
     });
   }
 });
