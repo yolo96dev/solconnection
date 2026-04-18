@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import solWalletLinkRouter from "./routes/sol-wallet-link";
+import solWalletLinkRouter from "./routes/sol-wallet-link.js";
 
 const app = express();
 
