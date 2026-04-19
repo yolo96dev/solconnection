@@ -252,29 +252,41 @@ router.post("/finalize", async (req, res) => {
     }
 
     const executor = await getExecutorAccount();
+
     const needed = BigInt(expectedNearYocto);
     const wrapBal = BigInt(await getWrapNearBalance(executor.accountId));
 
-    if (wrapBal < needed) {
+    if (wrapBal <= 0n) {
       return res.status(400).json({
-        error:
-          "Executor does not have enough received wNEAR yet. Wait for settlement or verify your quote recipient is the executor account.",
+        error: "Executor has no settled wNEAR yet. Wait a moment and try again.",
       });
     }
 
-    await unwrapWNear(expectedNearYocto);
+    // use the actual settled balance if it is slightly under expected
+    const amountToUse = wrapBal < needed ? wrapBal : needed;
+
+    // optional: avoid dust / nonsense finalization
+    if (amountToUse <= 0n) {
+      return res.status(400).json({
+        error: "No usable settled wNEAR available to finalize.",
+      });
+    }
+
+    await unwrapWNear(amountToUse.toString());
     await sleep(1200);
 
     const tx: any = await enterJackpot({
       entropyHex,
-      amountYocto: expectedNearYocto,
+      amountYocto: amountToUse.toString(),
     });
 
     return res.json({
       ok: true,
       executorAccountId: executor.accountId,
       beneficiaryNearAccountId: nearAccountId,
-      enteredAmountYocto: expectedNearYocto,
+      expectedNearYocto,
+      availableWrapYocto: wrapBal.toString(),
+      enteredAmountYocto: amountToUse.toString(),
       txHash: tx?.transaction_outcome?.id || tx?.transaction?.hash || null,
     });
   } catch (err: any) {
