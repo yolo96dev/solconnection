@@ -73,6 +73,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function log(scope: string, payload?: unknown) {
+  const ts = new Date().toISOString();
+  if (payload === undefined) {
+    console.log(`[${ts}] ${scope}`);
+    return;
+  }
+  console.log(`[${ts}] ${scope}`, payload);
+}
+
 function extractReceivedAmountYoctoOrSmallestUnit(status: any): string | null {
   const candidates = [
     status?.destinationAmount,
@@ -116,7 +125,20 @@ router.post("/quote", async (req, res) => {
     const amount = asString(req.body?.amount);
     const slippageTolerance = Number(req.body?.slippageTolerance ?? 100);
 
+    log("SOL BET QUOTE REQUEST", {
+      nearAccountId,
+      solAddress,
+      amount,
+      slippageTolerance,
+    });
+
     if (!nearAccountId || !solAddress || !amount) {
+      log("SOL BET QUOTE REJECTED_MISSING_FIELDS", {
+        nearAccountId,
+        solAddress,
+        amount,
+      });
+
       return res.status(400).json({
         error: "nearAccountId, solAddress, and amount are required",
       });
@@ -146,11 +168,27 @@ router.post("/quote", async (req, res) => {
       deadline: new Date(deadlineMs).toISOString(),
     };
 
+    log("SOL BET QUOTE PAYLOAD", payload);
+
     const quote = await createIntentsQuote(payload);
     const depositAddress = extractDepositAddress(quote);
 
+    log("SOL BET QUOTE RESPONSE", {
+      depositAddress,
+      amountIn:
+        asString((quote as any)?.amountIn) ||
+        asString((quote as any)?.amount) ||
+        amount,
+      amountOut: asString((quote as any)?.amountOut) || null,
+      expirationTime:
+        asString((quote as any)?.expirationTime) ||
+        asString((quote as any)?.deadline) ||
+        payload.deadline,
+      raw: quote,
+    });
+
     if (!depositAddress) {
-      console.error("INTENTS QUOTE MISSING DEPOSIT ADDRESS", {
+      log("INTENTS QUOTE MISSING DEPOSIT ADDRESS", {
         payload,
         quote,
       });
@@ -180,7 +218,11 @@ router.post("/quote", async (req, res) => {
       },
     });
   } catch (err: any) {
-    console.error("SOL BET QUOTE ERROR:", err);
+    console.error("SOL BET QUOTE ERROR:", {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name,
+    });
     return res.status(500).json({
       error: err?.message || "Failed to create Intents quote",
     });
@@ -192,7 +234,17 @@ router.post("/deposit-submit", async (req, res) => {
     const depositAddress = asString(req.body?.depositAddress);
     const txHash = asString(req.body?.txHash);
 
+    log("SOL BET DEPOSIT SUBMIT REQUEST", {
+      depositAddress,
+      txHash,
+    });
+
     if (!depositAddress || !txHash) {
+      log("SOL BET DEPOSIT SUBMIT REJECTED_MISSING_FIELDS", {
+        depositAddress,
+        txHash,
+      });
+
       return res.status(400).json({
         error: "depositAddress and txHash are required",
       });
@@ -200,12 +252,22 @@ router.post("/deposit-submit", async (req, res) => {
 
     const result = await submitIntentsDepositTx({ depositAddress, txHash });
 
+    log("SOL BET DEPOSIT SUBMIT RESPONSE", {
+      depositAddress,
+      txHash,
+      result,
+    });
+
     return res.json({
       ok: true,
       result,
     });
   } catch (err: any) {
-    console.error("SOL BET DEPOSIT SUBMIT ERROR:", err);
+    console.error("SOL BET DEPOSIT SUBMIT ERROR:", {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name,
+    });
     return res.status(500).json({
       error: err?.message || "Failed to submit deposit tx hash",
     });
@@ -216,7 +278,12 @@ router.get("/status", async (req, res) => {
   try {
     const depositAddress = asString(req.query.depositAddress);
 
+    log("SOL BET STATUS REQUEST", {
+      depositAddress,
+    });
+
     if (!depositAddress) {
+      log("SOL BET STATUS REJECTED_MISSING_DEPOSIT_ADDRESS");
       return res.status(400).json({
         error: "depositAddress is required",
       });
@@ -225,6 +292,13 @@ router.get("/status", async (req, res) => {
     const status = await getIntentsStatus(depositAddress);
     const receivedAmount = extractReceivedAmountYoctoOrSmallestUnit(status);
 
+    log("SOL BET STATUS RESPONSE", {
+      depositAddress,
+      status: status?.status || null,
+      receivedAmount,
+      raw: status,
+    });
+
     return res.json({
       ok: true,
       status: status?.status || null,
@@ -232,7 +306,11 @@ router.get("/status", async (req, res) => {
       raw: status,
     });
   } catch (err: any) {
-    console.error("SOL BET STATUS ERROR:", err);
+    console.error("SOL BET STATUS ERROR:", {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name,
+    });
     return res.status(500).json({
       error: err?.message || "Failed to load Intents status",
     });
@@ -245,7 +323,20 @@ router.post("/finalize", async (req, res) => {
     const entropyHex = asString(req.body?.entropyHex);
     const expectedNearYocto = asString(req.body?.expectedNearYocto);
 
+    log("SOL BET FINALIZE REQUEST", {
+      nearAccountId,
+      entropyHex,
+      expectedNearYocto,
+      rawBody: req.body,
+    });
+
     if (!nearAccountId || !entropyHex || !expectedNearYocto) {
+      log("SOL BET FINALIZE REJECTED_MISSING_FIELDS", {
+        nearAccountId,
+        entropyHex,
+        expectedNearYocto,
+      });
+
       return res.status(400).json({
         error: "nearAccountId, entropyHex, and expectedNearYocto are required",
       });
@@ -253,34 +344,84 @@ router.post("/finalize", async (req, res) => {
 
     const executor = await getExecutorAccount();
 
+    log("SOL BET FINALIZE EXECUTOR_READY", {
+      executorAccountId: executor?.accountId,
+    });
+
     const needed = BigInt(expectedNearYocto);
-    const wrapBal = BigInt(await getWrapNearBalance(executor.accountId));
+    const wrapBalStr = await getWrapNearBalance(executor.accountId);
+    const wrapBal = BigInt(wrapBalStr);
+
+    log("SOL BET FINALIZE BALANCE_CHECK", {
+      executorAccountId: executor.accountId,
+      needed: needed.toString(),
+      wrapBal: wrapBal.toString(),
+      delta: (wrapBal - needed).toString(),
+    });
 
     if (wrapBal <= 0n) {
+      log("SOL BET FINALIZE REJECTED_NO_SETTLED_WRAP", {
+        executorAccountId: executor.accountId,
+        wrapBal: wrapBal.toString(),
+        needed: needed.toString(),
+      });
+
       return res.status(400).json({
         error: "Executor has no settled wNEAR yet. Wait a moment and try again.",
       });
     }
 
-    // use the actual settled balance if it is slightly under expected
     const amountToUse = wrapBal < needed ? wrapBal : needed;
 
-    // optional: avoid dust / nonsense finalization
+    log("SOL BET FINALIZE AMOUNT_SELECTED", {
+      executorAccountId: executor.accountId,
+      needed: needed.toString(),
+      wrapBal: wrapBal.toString(),
+      amountToUse: amountToUse.toString(),
+      usingLessThanExpected: amountToUse !== needed,
+    });
+
     if (amountToUse <= 0n) {
+      log("SOL BET FINALIZE REJECTED_NO_USABLE_AMOUNT", {
+        executorAccountId: executor.accountId,
+        amountToUse: amountToUse.toString(),
+      });
+
       return res.status(400).json({
         error: "No usable settled wNEAR available to finalize.",
       });
     }
 
-    await unwrapWNear(amountToUse.toString());
+    log("SOL BET FINALIZE UNWRAP_START", {
+      executorAccountId: executor.accountId,
+      amountToUse: amountToUse.toString(),
+    });
+
+    const unwrapTx: any = await unwrapWNear(amountToUse.toString());
+
+    log("SOL BET FINALIZE UNWRAP_DONE", {
+      executorAccountId: executor.accountId,
+      amountToUse: amountToUse.toString(),
+      unwrapTxHash:
+        unwrapTx?.transaction_outcome?.id || unwrapTx?.transaction?.hash || null,
+      unwrapRaw: unwrapTx,
+    });
+
     await sleep(1200);
+
+    log("SOL BET FINALIZE ENTER_START", {
+      executorAccountId: executor.accountId,
+      nearAccountId,
+      entropyHex,
+      amountToUse: amountToUse.toString(),
+    });
 
     const tx: any = await enterJackpot({
       entropyHex,
       amountYocto: amountToUse.toString(),
     });
 
-    return res.json({
+    const responseBody = {
       ok: true,
       executorAccountId: executor.accountId,
       beneficiaryNearAccountId: nearAccountId,
@@ -288,9 +429,20 @@ router.post("/finalize", async (req, res) => {
       availableWrapYocto: wrapBal.toString(),
       enteredAmountYocto: amountToUse.toString(),
       txHash: tx?.transaction_outcome?.id || tx?.transaction?.hash || null,
+    };
+
+    log("SOL BET FINALIZE SUCCESS", {
+      ...responseBody,
+      enterRaw: tx,
     });
+
+    return res.json(responseBody);
   } catch (err: any) {
-    console.error("SOL BET FINALIZE ERROR:", err);
+    console.error("SOL BET FINALIZE ERROR:", {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name,
+    });
     return res.status(500).json({
       error: err?.message || "Failed to finalize SOL bet",
     });
