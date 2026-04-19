@@ -9,6 +9,11 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@near-js/accounts": "^2.5.1",
+    "@near-js/crypto": "^2.5.1",
+    "@near-js/providers": "^2.5.1",
+    "@near-js/signers": "^2.5.1",
+    "@near-js/transactions": "^2.5.1",
     "@supabase/supabase-js": "^2.53.0",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",
