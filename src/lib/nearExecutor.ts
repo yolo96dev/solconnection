@@ -1,4 +1,4 @@
-import * as nearAPI from "near-api-js";
+import * as nearApiNs from "near-api-js";
 
 const NEAR_NETWORK_ID = process.env.NEAR_NETWORK_ID?.trim() || "mainnet";
 const NEAR_NODE_URL =
@@ -17,10 +17,127 @@ const JACKPOT_CONTRACT_ID =
 type ExecutorAccount = any;
 
 let cachedAccount: ExecutorAccount | null = null;
+let cachedRuntime: Promise<{
+  connectFn: any;
+  InMemoryKeyStore: any;
+  KeyPair: any;
+  txFunctionCall: any | null;
+}> | null = null;
 
 function required(name: string, value: string) {
   if (!value) throw new Error(`Missing required env: ${name}`);
   return value;
+}
+
+async function loadNearRuntime() {
+  if (cachedRuntime) return cachedRuntime;
+
+  cachedRuntime = (async () => {
+    const pkgNs: any = nearApiNs as any;
+
+    const connectFn =
+      pkgNs.connect ||
+      pkgNs.default?.connect ||
+      null;
+
+    let InMemoryKeyStore =
+      pkgNs.keyStores?.InMemoryKeyStore ||
+      pkgNs.default?.keyStores?.InMemoryKeyStore ||
+      null;
+
+    let KeyPair =
+      pkgNs.KeyPair ||
+      pkgNs.utils?.KeyPair ||
+      pkgNs.default?.KeyPair ||
+      null;
+
+    let txFunctionCall =
+      pkgNs.transactions?.functionCall ||
+      pkgNs.default?.transactions?.functionCall ||
+      null;
+
+    if (!InMemoryKeyStore) {
+      const fallbackModules = [
+        "near-api-js/lib/key_stores",
+        "near-api-js/lib/key_stores/in_memory_key_store",
+      ];
+
+      for (const mod of fallbackModules) {
+        try {
+          const m: any = await import(mod);
+          InMemoryKeyStore =
+            InMemoryKeyStore ||
+            m.InMemoryKeyStore ||
+            m.default?.InMemoryKeyStore ||
+            m.default ||
+            null;
+          if (InMemoryKeyStore) break;
+        } catch {}
+      }
+    }
+
+    if (!KeyPair) {
+      const fallbackModules = [
+        "near-api-js/lib/utils",
+        "near-api-js/lib/utils/key_pair",
+      ];
+
+      for (const mod of fallbackModules) {
+        try {
+          const m: any = await import(mod);
+          KeyPair =
+            KeyPair ||
+            m.KeyPair ||
+            m.default?.KeyPair ||
+            m.default ||
+            null;
+          if (KeyPair?.fromString) break;
+        } catch {}
+      }
+    }
+
+    if (!txFunctionCall) {
+      const fallbackModules = [
+        "near-api-js/lib/transaction",
+        "near-api-js/lib/transactions",
+      ];
+
+      for (const mod of fallbackModules) {
+        try {
+          const m: any = await import(mod);
+          txFunctionCall =
+            txFunctionCall ||
+            m.functionCall ||
+            m.transactions?.functionCall ||
+            m.default?.functionCall ||
+            m.default?.transactions?.functionCall ||
+            null;
+          if (txFunctionCall) break;
+        } catch {}
+      }
+    }
+
+    if (!connectFn) {
+      throw new Error("near-api-js connect() is unavailable");
+    }
+
+    if (!InMemoryKeyStore) {
+      throw new Error("near-api-js InMemoryKeyStore is unavailable");
+    }
+
+    if (!KeyPair?.fromString) {
+      throw new Error("near-api-js KeyPair.fromString is unavailable");
+    }
+
+    return {
+      connectFn,
+      InMemoryKeyStore,
+      KeyPair,
+      txFunctionCall,
+    };
+  })();
+
+  return cachedRuntime;
 }
 
 export async function getExecutorAccount(): Promise<ExecutorAccount> {
@@ -35,24 +152,9 @@ export async function getExecutorAccount(): Promise<ExecutorAccount> {
     NEAR_EXECUTOR_PRIVATE_KEY
   );
 
-  const keyStores: any = (nearAPI as any).keyStores;
-  const KeyPair: any = (nearAPI as any).KeyPair;
-  const connectFn: any =
-    (nearAPI as any).connect || (nearAPI as any).default?.connect;
+  const { connectFn, InMemoryKeyStore, KeyPair } = await loadNearRuntime();
 
-  if (!keyStores?.InMemoryKeyStore) {
-    throw new Error("near-api-js keyStores.InMemoryKeyStore is unavailable");
-  }
-
-  if (!KeyPair?.fromString) {
-    throw new Error("near-api-js KeyPair.fromString is unavailable");
-  }
-
-  if (!connectFn) {
-    throw new Error("near-api-js connect() is unavailable");
-  }
-
-  const keyStore = new keyStores.InMemoryKeyStore();
+  const keyStore = new InMemoryKeyStore();
   const keyPair = KeyPair.fromString(privateKey as any);
 
   await keyStore.setKey(NEAR_NETWORK_ID, accountId, keyPair);
@@ -131,18 +233,18 @@ async function callContract(params: {
   }
 
   if (typeof executor.signAndSendTransaction === "function") {
-    const txns: any = (nearAPI as any).transactions;
+    const { txFunctionCall } = await loadNearRuntime();
 
-    if (!txns?.functionCall) {
+    if (!txFunctionCall) {
       throw new Error(
-        "Executor has no functionCall, and near-api-js transactions.functionCall is unavailable"
+        "Executor has no functionCall, and near-api-js functionCall action is unavailable"
       );
     }
 
     return executor.signAndSendTransaction({
       receiverId: params.contractId,
       actions: [
-        txns.functionCall(
+        txFunctionCall(
           params.methodName,
           Buffer.from(JSON.stringify(params.args)),
           BigInt(params.gas),
