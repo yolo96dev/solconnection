@@ -29,13 +29,14 @@ export type IntentsQuoteRequest = {
 };
 
 export type IntentsQuoteResponse = {
-  depositAddress: string;
+  depositAddress?: string;
   amount?: string;
   amountIn?: string;
   amountOut?: string;
   expirationTime?: string;
   quoteHash?: string;
   timeEstimateSeconds?: number;
+  deadline?: string;
   [key: string]: any;
 };
 
@@ -97,6 +98,17 @@ function extractReceivedAmountYoctoOrSmallestUnit(status: any): string | null {
   return null;
 }
 
+function extractDepositAddress(quote: any): string {
+  return (
+    asString(quote?.depositAddress) ||
+    asString(quote?.data?.depositAddress) ||
+    asString(quote?.quote?.depositAddress) ||
+    asString(quote?.execution?.depositAddress) ||
+    asString(quote?.result?.depositAddress) ||
+    ""
+  );
+}
+
 router.post("/quote", async (req, res) => {
   try {
     const nearAccountId = asString(req.body?.nearAccountId);
@@ -135,26 +147,40 @@ router.post("/quote", async (req, res) => {
     };
 
     const quote = await createIntentsQuote(payload);
+    const depositAddress = extractDepositAddress(quote);
 
-    if (!quote?.depositAddress) {
+    if (!depositAddress) {
+      console.error("INTENTS QUOTE MISSING DEPOSIT ADDRESS", {
+        payload,
+        quote,
+      });
+
       return res.status(502).json({
-        error: "Intents quote succeeded but did not return depositAddress",
+        error: "Intents quote did not return an executable depositAddress",
+        details: quote,
       });
     }
 
     return res.json({
       ok: true,
       quote: {
-        depositAddress: String(quote.depositAddress),
-        expirationTime: quote.expirationTime || quote.deadline || payload.deadline,
-        amountIn: quote.amountIn || quote.amount || amount,
-        amountOut: quote.amountOut || null,
+        depositAddress,
+        expirationTime:
+          asString((quote as any)?.expirationTime) ||
+          asString((quote as any)?.deadline) ||
+          payload.deadline,
+        amountIn:
+          asString((quote as any)?.amountIn) ||
+          asString((quote as any)?.amount) ||
+          amount,
+        amountOut: asString((quote as any)?.amountOut) || null,
         executorRecipient,
         beneficiaryNearAccountId: nearAccountId,
         raw: quote,
       },
     });
   } catch (err: any) {
+    console.error("SOL BET QUOTE ERROR:", err);
     return res.status(500).json({
       error: err?.message || "Failed to create Intents quote",
     });
@@ -179,6 +205,7 @@ router.post("/deposit-submit", async (req, res) => {
       result,
     });
   } catch (err: any) {
+    console.error("SOL BET DEPOSIT SUBMIT ERROR:", err);
     return res.status(500).json({
       error: err?.message || "Failed to submit deposit tx hash",
     });
@@ -205,6 +232,7 @@ router.get("/status", async (req, res) => {
       raw: status,
     });
   } catch (err: any) {
+    console.error("SOL BET STATUS ERROR:", err);
     return res.status(500).json({
       error: err?.message || "Failed to load Intents status",
     });
@@ -235,7 +263,6 @@ router.post("/finalize", async (req, res) => {
     }
 
     await unwrapWNear(expectedNearYocto);
-
     await sleep(1200);
 
     const tx: any = await enterJackpot({
@@ -248,12 +275,10 @@ router.post("/finalize", async (req, res) => {
       executorAccountId: executor.accountId,
       beneficiaryNearAccountId: nearAccountId,
       enteredAmountYocto: expectedNearYocto,
-      txHash:
-        tx?.transaction_outcome?.id ||
-        tx?.transaction?.hash ||
-        null,
+      txHash: tx?.transaction_outcome?.id || tx?.transaction?.hash || null,
     });
   } catch (err: any) {
+    console.error("SOL BET FINALIZE ERROR:", err);
     return res.status(500).json({
       error: err?.message || "Failed to finalize SOL bet",
     });
