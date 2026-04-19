@@ -6,8 +6,7 @@ import {
 } from "../lib/intents.js";
 import {
   getExecutorAccount,
-  getWrapNearBalance,
-  unwrapWNear,
+  getNativeNearBalance,
   enterJackpot,
 } from "../lib/nearExecutor.js";
 
@@ -97,6 +96,7 @@ function extractReceivedAmountYoctoOrSmallestUnit(status: any): string | null {
     status?.swap?.amountOut,
     status?.swap?.outputAmount,
     status?.quote?.amountOut,
+    status?.swapDetails?.amountOut,
   ];
 
   for (const c of candidates) {
@@ -349,34 +349,34 @@ router.post("/finalize", async (req, res) => {
     });
 
     const needed = BigInt(expectedNearYocto);
-    const wrapBalStr = await getWrapNearBalance(executor.accountId);
-    const wrapBal = BigInt(wrapBalStr);
+    const nativeBalStr = await getNativeNearBalance(executor.accountId);
+    const nativeBal = BigInt(nativeBalStr);
 
-    log("SOL BET FINALIZE BALANCE_CHECK", {
+    log("SOL BET FINALIZE NATIVE_BALANCE_CHECK", {
       executorAccountId: executor.accountId,
       needed: needed.toString(),
-      wrapBal: wrapBal.toString(),
-      delta: (wrapBal - needed).toString(),
+      nativeBal: nativeBal.toString(),
+      delta: (nativeBal - needed).toString(),
     });
 
-    if (wrapBal <= 0n) {
-      log("SOL BET FINALIZE REJECTED_NO_SETTLED_WRAP", {
+    if (nativeBal <= 0n) {
+      log("SOL BET FINALIZE REJECTED_NO_SETTLED_NATIVE", {
         executorAccountId: executor.accountId,
-        wrapBal: wrapBal.toString(),
+        nativeBal: nativeBal.toString(),
         needed: needed.toString(),
       });
 
       return res.status(400).json({
-        error: "Executor has no settled wNEAR yet. Wait a moment and try again.",
+        error: "Executor has no settled native NEAR yet. Wait a moment and try again.",
       });
     }
 
-    const amountToUse = wrapBal < needed ? wrapBal : needed;
+    const amountToUse = nativeBal < needed ? nativeBal : needed;
 
     log("SOL BET FINALIZE AMOUNT_SELECTED", {
       executorAccountId: executor.accountId,
       needed: needed.toString(),
-      wrapBal: wrapBal.toString(),
+      nativeBal: nativeBal.toString(),
       amountToUse: amountToUse.toString(),
       usingLessThanExpected: amountToUse !== needed,
     });
@@ -388,24 +388,9 @@ router.post("/finalize", async (req, res) => {
       });
 
       return res.status(400).json({
-        error: "No usable settled wNEAR available to finalize.",
+        error: "No usable settled native NEAR available to finalize.",
       });
     }
-
-    log("SOL BET FINALIZE UNWRAP_START", {
-      executorAccountId: executor.accountId,
-      amountToUse: amountToUse.toString(),
-    });
-
-    const unwrapTx: any = await unwrapWNear(amountToUse.toString());
-
-    log("SOL BET FINALIZE UNWRAP_DONE", {
-      executorAccountId: executor.accountId,
-      amountToUse: amountToUse.toString(),
-      unwrapTxHash:
-        unwrapTx?.transaction_outcome?.id || unwrapTx?.transaction?.hash || null,
-      unwrapRaw: unwrapTx,
-    });
 
     await sleep(1200);
 
@@ -426,7 +411,7 @@ router.post("/finalize", async (req, res) => {
       executorAccountId: executor.accountId,
       beneficiaryNearAccountId: nearAccountId,
       expectedNearYocto,
-      availableWrapYocto: wrapBal.toString(),
+      availableNativeYocto: nativeBal.toString(),
       enteredAmountYocto: amountToUse.toString(),
       txHash: tx?.transaction_outcome?.id || tx?.transaction?.hash || null,
     };

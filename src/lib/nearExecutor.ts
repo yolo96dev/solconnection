@@ -8,9 +8,6 @@ const NEAR_NODE_URL =
 const NEAR_EXECUTOR_ACCOUNT_ID =
   process.env.NEAR_EXECUTOR_ACCOUNT_ID?.trim() || "";
 
-const WRAP_NEAR_CONTRACT_ID =
-  process.env.WRAP_NEAR_CONTRACT_ID?.trim() || "wrap.near";
-
 const JACKPOT_CONTRACT_ID =
   process.env.JACKPOT_CONTRACT_ID?.trim() || "dripzjp.near";
 
@@ -46,28 +43,17 @@ export async function getExecutorAccount(): Promise<ExecutorAccount> {
   return cachedAccount;
 }
 
-export async function getWrapNearBalance(accountId?: string): Promise<string> {
+export async function getNativeNearBalance(accountId?: string): Promise<string> {
   const executor = await getExecutorAccount();
   const target = accountId || String(executor.accountId || "");
 
-  const raw = await executor.provider.query({
-    request_type: "call_function",
+  const raw: any = await executor.provider.query({
+    request_type: "view_account",
     finality: "optimistic",
-    account_id: WRAP_NEAR_CONTRACT_ID,
-    method_name: "ft_balance_of",
-    args_base64: Buffer.from(
-      JSON.stringify({ account_id: target }),
-      "utf8"
-    ).toString("base64"),
+    account_id: target,
   });
 
-  const bytes = Array.isArray((raw as any)?.result)
-    ? Buffer.from((raw as any).result)
-    : Buffer.from([]);
-  const text = bytes.toString("utf8");
-  const result = text ? JSON.parse(text) : "0";
-
-  return String(result || "0");
+  return String(raw?.amount || "0");
 }
 
 async function callContract(params: {
@@ -89,18 +75,6 @@ async function callContract(params: {
         BigInt(params.attachedDeposit)
       ),
     ],
-  });
-}
-
-export async function unwrapWNear(amountYocto: string) {
-  return callContract({
-    contractId: WRAP_NEAR_CONTRACT_ID,
-    methodName: "near_withdraw",
-    args: {
-      amount: String(amountYocto),
-    },
-    gas: "100000000000000",
-    attachedDeposit: "1",
   });
 }
 
